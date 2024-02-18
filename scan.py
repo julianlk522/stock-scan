@@ -8,7 +8,6 @@ from email.mime.text import MIMEText
 
 import requests
 from bs4 import BeautifulSoup
-from dotenv import load_dotenv
 
 
 def main():
@@ -66,7 +65,6 @@ def tv_scan():
     # (Biotech, Casinos/Gaming, Insurance,
     # Investment Banks, O&G, Coal, etc.)
     scan_settings = {"columns":["name","description","close","total_revenue_yoy_growth_fq","country.tr","industry.tr"],"filter":[{"left":"close","operation":"in_range%","right":["high|1M",0.8,1]},{"left":"Value.Traded|1W","operation":"greater","right":50000000},{"left":"close","operation":"egreater","right":5},{"left":"total_revenue_ttm","operation":"greater","right":200000000},{"left":"industry","operation":"in_range","right":["Advertising/Marketing Services","Aerospace & Defense","Agricultural Commodities/Milling","Air Freight/Couriers","Airlines","Alternative Power Generation","Aluminum","Apparel/Footwear","Apparel/Footwear Retail","Auto Parts: OEM","Automotive Aftermarket","Beverages: Alcoholic","Beverages: Non-Alcoholic","Broadcasting","Building Products","Cable/Satellite TV","Catalog/Specialty Distribution","Chemicals: Agricultural","Chemicals: Major Diversified","Chemicals: Specialty","Commercial Printing/Forms","Computer Communications","Computer Peripherals","Computer Processing Hardware","Consumer Sundries","Containers/Packaging","Contract Drilling","Construction Materials","Data Processing Services","Department Stores","Discount Stores","Drugstore Chains","Electric Utilities","Electrical Products","Electronic Components","Electronic Equipment/Instruments","Electronic Production Equipment","Electronics Distributors","Electronics/Appliance Stores","Electronics/Appliances","Engineering & Construction","Environmental Services","Finance/Rental/Leasing","Financial Conglomerates","Financial Publishing/Services","Food Distributors","Food Retail","Food: Major Diversified","Food: Meat/Fish/Dairy","Food: Specialty/Candy","Forest Products","General Government","Home Furnishings","Home Improvement Chains","Homebuilding","Household/Personal Care","Industrial Conglomerates","Industrial Machinery","Industrial Specialties","Information Technology Services","Internet Retail","Internet Software/Services","Investment Managers","Investment Trusts/Mutual Funds","Major Telecommunications","Marine Shipping","Media Conglomerates","Metal Fabrication","Miscellaneous","Miscellaneous Commercial Services","Miscellaneous Manufacturing","Motor Vehicles","Movies/Entertainment","Office Equipment/Supplies","Other Consumer Services","Other Consumer Specialties","Other Metals/Minerals","Other Transportation","Packaged Software","Personnel Services","Precious Metals","Publishing: Books/Magazines","Publishing: Newspapers","Pulp & Paper","Railroads","Real Estate Development","Real Estate Investment Trusts","Recreational Products","Restaurants","Semiconductors","Services to the Health Industry","Specialty Stores","Specialty Telecommunications","Steel","Telecommunications Equipment","Textiles","Tools & Hardware","Trucking","Trucks/Construction/Farm Machinery","Water Utilities","Wholesale Distributors","Wireless Telecommunications","Casinos/Gaming","Major Banks"]},{"left":"low|1W","operation":"in_range%","right":["High.All",0.8,1]}],"ignore_unknown_fields":False,"options":{"lang":"en"},"price_conversion":{"to_symbol":True},"range":[0,25],"sort":{"sortBy":"total_revenue_yoy_growth_fq","sortOrder":"desc"},"markets":["america"],"filter2":{"operator":"and","operands":[{"operation":{"operator":"or","operands":[{"operation":{"operator":"and","operands":[{"expression":{"left":"type","operation":"equal","right":"stock"}},{"expression":{"left":"typespecs","operation":"has","right":["common"]}}]}}]}},{"operation":{"operator":"or","operands":[{"operation":{"operator":"and","operands":[{"expression":{"left":"type","operation":"equal","right":"stock"}},{"expression":{"left":"typespecs","operation":"has","right":["common"]}}]}},{"operation":{"operator":"and","operands":[{"expression":{"left":"type","operation":"equal","right":"stock"}},{"expression":{"left":"typespecs","operation":"has","right":["preferred"]}}]}},{"operation":{"operator":"and","operands":[{"expression":{"left":"type","operation":"equal","right":"dr"}}]}},{"operation":{"operator":"and","operands":[{"expression":{"left":"type","operation":"equal","right":"fund"}},{"expression":{"left":"typespecs","operation":"has","right":["reit"]}}]}}]}}]}}
-
     settings_json = json.dumps(scan_settings)
 
     api_url = 'https://scanner.tradingview.com/america/scan'
@@ -87,7 +85,7 @@ def calculate_pvs(scan_results, cached_tickers):
     
     Calculate score for each stock based on ratio of current price to combined quarterly earnings and last dividend amount
     
-    Essentially merges current reported earnings and future expected earnings into a single score to act as a proxy for near-term valuation:
+    (Essentially merges current reported earnings and future expected earnings into a single score to act as a proxy for near-term valuation)
     """
 
     scores = {}
@@ -98,11 +96,11 @@ def calculate_pvs(scan_results, cached_tickers):
         
         qeps = get_qeps(ticker, cached_tickers)
 
-        ## Ratio of total quarterly earnings (EPS + dividends) to price, standardized to score of 100
-
-        ## e.g. $120/share, $0.75/share EPS, $0.50 dividend = 100 / ($120 / ($0.75 + $0.50)) = 100 / 96 = 1.04166667
+        ## Ratio of (last EPS + last dividend):current price
+        ## standardized to score of 100
         price = data[2]
         scores[ticker] = 100 / (price / qeps) if qeps else 0
+        ## e.g., $120/share, $0.75/share EPS, $0.50 dividend = 100 / ($120 / ($0.75 + $0.50)) = 100 / 96 = 1.04166667
         
     return scores
 
@@ -180,7 +178,6 @@ def email_results(scores):
     """Send scores to email."""
 
     ## get email credentials from args 1 and 2
-    load_dotenv()
     email_user = sys.argv[1]
     email_p = sys.argv[2]
 
