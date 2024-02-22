@@ -96,11 +96,20 @@ def calculate_pvs(scan_results, cached_tickers):
         
         qeps = get_qeps(ticker, cached_tickers)
 
-        ## Ratio of current price:(last EPS + last dividend)
+        ## Near-term valuation is assumed to be
+        ## current price / (last EPS + last dividend)
+
         ## standardized to score of 100
+        ## i.e., 100 = equally valued
+
+        ## Example:
+        ## $120/share, $0.75/share EPS, $0.50 dividend
+        ## = 100 / (120 / (0.75 + 0.50)) - 1
+        ## = 100 / 96 - 1
+        ## = 0.0416666667
+        ## (expected to rise 4.167%)
         price = data[2]
-        scores[ticker] = 100 / (price / qeps) if qeps else 0
-        ## e.g., $120/share, $0.75/share EPS, $0.50 dividend = 100 / ($120 / ($0.75 + $0.50)) = 100 / 96 = 1.04166667
+        scores[ticker] = 100 / (price / qeps) - 1 if qeps is not None else 0
         
     return scores
 
