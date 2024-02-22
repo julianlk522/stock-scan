@@ -136,7 +136,11 @@ def calculate_pvs(scan_results, cached_tickers):
         ## = 0.0416666667
         ## (expected to rise 4.167%)
         price = data[2]
-        scores[ticker] = 100 / (price / qeps) - 1 if qeps is not None else 0
+        pvs = 100 / (price / qeps) - 1 if qeps is not None else 0
+
+        ## round score to 2 decimal places
+        pvs = round(pvs, 2)
+        scores[ticker] = pvs 
         
     return scores
 
