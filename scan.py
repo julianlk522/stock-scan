@@ -20,14 +20,22 @@ def main():
     try:
         scan_results = tv_scan()
         cached_tickers = get_cached_tickers()
+
+        ## get new (uncached) tickers
+        tickers = [row['ticker'] for row in cached_tickers]
+        new_tickers = get_new_tickers(scan_results, tickers)
+
+        ## get scores
         scores = calculate_pvs(scan_results, cached_tickers)
 
+        ## update cache with fresh scores
         update_cache(cached_tickers)
 
         ## sort scores
-        scores = {k: v for k, v in sorted(scores.items(), key=lambda item: item[1], reverse=True)}
+        sorted_scores = {k: v for k, v in sorted(scores.items(), key=lambda item: item[1], reverse=True)}
 
-        return email_results(scores)
+        ## send to email
+        return email_results(sorted_scores, new_tickers)
     except Exception as e:
         print(f"error: {e}\n{traceback.format_exc()}\n")
         return
@@ -79,6 +87,25 @@ def get_cached_tickers():
         print(f"{len(cached_tickers)} cached tickers")
 
     return cached_tickers
+
+def get_new_tickers(scan_results, cache):
+    """Save new tickers to be highlighted in email"""
+
+    new = []
+
+    for stock in scan_results:
+        data = stock['d']
+        ticker = data[0]
+
+        if ticker in cache:
+            continue
+        new.append(ticker)
+
+    if len(new):
+        print(f"{len(new)} new tickers:\n"+ "\n".join(new))
+    else:
+        print("No new tickers")
+    return new
 
 def calculate_pvs(scan_results, cached_tickers):
     """Proxy Valuation Score (PVS)
@@ -183,7 +210,7 @@ def update_cache(cached_tickers):
         for row in cached_tickers:
             writer.writerow(row)
 
-def email_results(scores):
+def email_results(scores, new_tickers):
     """Send scores to email."""
 
     ## get email credentials from args 1 and 2
@@ -194,12 +221,23 @@ def email_results(scores):
         print('Error: could not get email credentials.')
         print(f'Provided: {email_user}, {email_p}')
         return
+    
+    ## HTML structure
+    html = """\
+    <html>
+    <body>
+    <h2>Watchlist:</h2>
+    <ol style='font-size: 20px;'>{scores}</ol>
+    </body>
+    </html>""".format(scores="".join([f"<li>{k}: {v}</li>" if k not in new_tickers else f"<strong><li style='color:red'>{k}: {v}</li></strong>" for k, v in scores.items()]))
+    # highlight all new additions to cache.csv in red
 
-    msg = MIMEText(str(scores))
+    msg = MIMEText(html, 'html')
     msg['Subject'] = f"Scan Results: {datetime.date.today()}"
 
+    ## send
     with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
         smtp.login(email_user, email_p)
-        smtp.sendmail(email_user, to_addrs=email_user, msg=msg.as_string())
+        smtp.sendmail(email_user, email_user, msg.as_string())
 
 main()
