@@ -10,36 +10,6 @@ import requests
 from bs4 import BeautifulSoup
 
 
-def main():
-    """Assemble stock watchlist and send to email."""
-
-    ## raise exception if email user and email pass not passed as args 1 and 2 
-    if len(sys.argv) < 3:
-        raise Exception("Email user and email pass not provided as arguments")
-
-    try:
-        scan_results = tv_scan()
-        cached_tickers = get_cached_tickers()
-
-        ## get new (uncached) tickers
-        tickers = [row['ticker'] for row in cached_tickers]
-        new_tickers = get_new_tickers(scan_results, tickers)
-
-        ## get scores
-        scores = calculate_pvs(scan_results, cached_tickers)
-
-        ## update cache with fresh scores
-        update_cache(cached_tickers)
-
-        ## sort scores
-        sorted_scores = {k: v for k, v in sorted(scores.items(), key=lambda item: item[1], reverse=True)}
-
-        ## send to email
-        return email_results(sorted_scores, new_tickers)
-    except Exception as e:
-        print(f"error: {e}\n{traceback.format_exc()}\n")
-        return
-
 def tv_scan():
     """Fetch tickers from TradingView API."""
 
@@ -89,17 +59,11 @@ def get_cached_tickers():
     return cached_tickers
 
 def get_new_tickers(scan_results, cache):
-    """Save new tickers to be highlighted in email"""
+    """Get new tickers from scan results. Informs email_results func which tickers to highlight in email HTML."""
 
-    new = []
-
-    for stock in scan_results:
-        data = stock['d']
-        ticker = data[0]
-
-        if ticker in cache:
-            continue
-        new.append(ticker)
+    ## data = stock['d']
+    ## ticker = data[0]
+    new = [stock['d'][0] for stock in scan_results if stock['d'][0] not in cache]
 
     if len(new):
         print(f"{len(new)} new tickers:\n"+ "\n".join(new))
@@ -244,4 +208,29 @@ def email_results(scores, new_tickers):
         smtp.login(email_user, email_p)
         smtp.sendmail(email_user, email_user, msg.as_string())
 
-main()
+if __name__ == "__main__":
+    ## raise exception if email user and email pass not passed as args 1 and 2 
+    if len(sys.argv) < 3:
+        raise Exception("Email user and email pass not provided as arguments")
+
+    try:
+        scan_results = tv_scan()
+        cached_tickers = get_cached_tickers()
+
+        ## get new (uncached) tickers
+        tickers = [row['ticker'] for row in cached_tickers]
+        new_tickers = get_new_tickers(scan_results, tickers)
+
+        ## get scores
+        scores = calculate_pvs(scan_results, cached_tickers)
+
+        ## update cache with fresh scores
+        update_cache(cached_tickers)
+
+        ## sort scores
+        sorted_scores = {k: v for k, v in sorted(scores.items(), key=lambda item: item[1], reverse=True)}
+
+        ## send to email
+        email_results(sorted_scores, new_tickers)
+    except Exception as e:
+        print(f"error: {e}\n{traceback.format_exc()}\n")
