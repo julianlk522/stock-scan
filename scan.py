@@ -73,7 +73,7 @@ def get_new_tickers_from_scan(scan_results, cache):
         print("No new tickers")
     return new
 
-def calculate_pvs(qni, price):
+def calculate_pvs(price, qni):
     """Calculate Proxy Valuation Score (PVS) for stock: ratio of current price to quarterly net income (combined quarterly EPS and last quarterly dividend)
     
     Basically merge current reported earnings and future expected earnings into single near-term valuation score
@@ -123,35 +123,32 @@ def get_qni(ticker):
     return qni
 
 def scrape_qni(ticker):
-    """Scrape for new earnings and dividend data, save to pending cache update"""
+    """Scrape for new earnings and dividend data, save to cached scores"""
 
-    url = f"https://www.alphaquery.com/stock/{ticker}/all-data-variables"
-    r = requests.get(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:75.0) Gecko/20100101 Firefox/75.0', 'authority': 'www.alphaquery.com', 'sec-ch-ua': '" Not A;Brand";v="99", "Chromium";v="75", "Google Chrome";v="75"', 'referer': 'https://www.alphaquery.com/stock/', 'accept': 'application/json, text/javascript, */*; q=0.01'})
-    soup = BeautifulSoup(r.content, "html.parser")
-
-    ## find latest quarterly EPS (0 if not found)
-    qeps_title_elem = soup.find(string='Last Quarterly Earnings per Share')
-    qeps_parent_table_elem = qeps_title_elem.find_parent("td") if qeps_title_elem else None
-    qeps_val_elem = qeps_parent_table_elem.findNextSibling() if qeps_parent_table_elem else None
-    qeps = float(qeps_val_elem.text) if qeps_val_elem else 0
-
-    ## find last dividend amount (0 if not found)
-    divid_title_elem = soup.find(string='Last Dividend Amount')
-    divid_parent_table_elem = divid_title_elem.find_parent("td") if divid_title_elem else None
-    divid_val_elem = divid_parent_table_elem.findNextSibling() if divid_parent_table_elem else None
-    divid = float(divid_val_elem.text) if divid_val_elem and divid_val_elem.text else 0
-
+    qeps = float(get_alphaquery_table_text(ticker, 'Last Quarterly Earnings per Share'))
+    divid = float(get_alphaquery_table_text(ticker, 'Last Dividend Amount'))
     qni = qeps + divid
 
-    ## find last reported earnings date
-    last_eps_title_elem = soup.find(string='Last Quarterly Earnings Report Date')
-    last_eps_parent_table_elem = last_eps_title_elem.find_parent("td") if last_eps_title_elem else None
-    last_eps_val_elem = last_eps_parent_table_elem.findNextSibling() if last_eps_parent_table_elem else None
-    last_eps = last_eps_val_elem.text if last_eps_val_elem else None
+    last_eps_date = get_alphaquery_table_text(ticker, 'Last Quarterly Earnings Report Date')
 
     ## save fresh data
-    cached_tickers.append({'ticker': ticker, 'last_earnings': last_eps, 'qni': qni})
+    cached_tickers.append({'ticker': ticker, 'last_earnings': last_eps_date, 'qni': qni})
     return qni
+
+def get_alphaquery_table_text(ticker, text):
+    """Fetch the appropriate text from AlphaQuery results page"""
+
+    url = f"https://www.alphaquery.com/stock/{ticker}/all-data-variables"
+    r = requests.get(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:75.0) Gecko/20100101 Firefox/75.0', 'authority': 'www.alphaquery.com', 
+    'sec-ch-ua': '" Not A;Brand";v="99", "Chromium";v="75", "Google Chrome";v="75"', 'referer': 'https://www.alphaquery.com/stock/', 'accept': 'application/json, text/javascript, */*; q=0.01'})
+    soup = BeautifulSoup(r.content, "html.parser")
+
+    title_elem = soup.find(string=text)
+    parent_table_elem = title_elem.find_parent("td") if title_elem else None
+    val_elem = parent_table_elem.findNextSibling() if parent_table_elem else None
+    val = val_elem.text if val_elem and val_elem.text != "" else 0
+
+    return val
 
 def email_results(scores, new_tickers):
     """Send scores to email"""
@@ -193,7 +190,6 @@ def update_cache(updated_tickers):
             writer.writerow(row)
 
 if __name__ == "__main__":
-    ## raise exception if email user and email pass not passed as args 1 and 2 
     if len(sys.argv) < 3:
         raise Exception("Email user and email pass not provided as arguments")
 
@@ -201,26 +197,21 @@ if __name__ == "__main__":
         scan_results = tv_scan()
         cached_tickers = get_cached_tickers()
 
-        ## get new (uncached) tickers
         tickers = [row['ticker'] for row in cached_tickers]
         new_tickers = get_new_tickers_from_scan(scan_results, tickers)
 
-        ## get proxy valuation scores
         scores = {}
         for stock in scan_results:
+            print("scanning: ", stock)
             data = stock['d']
             ticker = data[0]
             price = data[2]
 
             qni = get_qni(ticker)
             scores[ticker] = calculate_pvs(price, qni)
-
         sorted_scores = {k: v for k, v in sorted(scores.items(), key=lambda item: item[1], reverse=True)}
 
-        ## send to email
-        email_results(sorted_scores, new_tickers)
-
-        ## update cache with fresh scores / earnings dates
+        # email_results(sorted_scores, new_tickers)
         update_cache(cached_tickers)
     except Exception as e:
         print(f"error: {e}\n{traceback.format_exc()}\n")
