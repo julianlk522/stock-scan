@@ -58,8 +58,10 @@ def get_cached_tickers():
 
     return cached_tickers
 
-def get_new_tickers(scan_results, cache):
-    """Get new tickers from scan results. Informs email_results func which tickers to highlight in email HTML."""
+def get_new_tickers_from_scan(scan_results, cache):
+    """Get new tickers from TradingView scan results.
+    
+    (Informs email_results func which tickers to highlight in email HTML)"""
 
     ## data = stock['d']
     ## ticker = data[0]
@@ -71,115 +73,88 @@ def get_new_tickers(scan_results, cache):
         print("No new tickers")
     return new
 
-def calculate_pvs(scan_results, cached_tickers):
-    """Proxy Valuation Score (PVS)
+def calculate_pvs(qni, price):
+    """Calculate Proxy Valuation Score (PVS) for stock: ratio of current price to quarterly net income (combined quarterly EPS and last quarterly dividend)
     
-    Calculate score for each stock based on ratio of current price to combined quarterly EPS and last dividend amount
+    Basically merge current reported earnings and future expected earnings into single near-term valuation score
+
+    standardized to score of 100
+    i.e., score of 100 = equally valued
+
+    Example:
+    $120/share, $0.75/share EPS, $0.50 dividend
     
-    (Essentially merges current reported earnings and future expected earnings into a single score to act as a proxy for near-term valuation)
+    = 100 / (120 / (0.75 + 0.50)) - 1
+    = 100 / 96 - 1
+    = 0.0416666667
+    (PVS 0.0417; expected to rise 4.167%)
     """
 
-    scores = {}
+    return round(100 / (price / qni) - 1, 2) if qni is not None or qni > 0 else 0
 
-    for stock in scan_results:
-        data = stock['d']
-        ticker = data[0]
-        
-        qeps = get_qeps(ticker, cached_tickers)
-
-        ## Near-term valuation is assumed to be
-        ## current price / (last EPS + last dividend)
-
-        ## standardized to score of 100
-        ## i.e., 100 = equally valued
-
-        ## Example:
-        ## $120/share, $0.75/share EPS, $0.50 dividend
-        ## = 100 / (120 / (0.75 + 0.50)) - 1
-        ## = 100 / 96 - 1
-        ## = 0.0416666667
-        ## (expected to rise 4.167%)
-        price = data[2]
-        pvs = 100 / (price / qeps) - 1 if qeps is not None else 0
-
-        ## round score to 2 decimal places
-        pvs = round(pvs, 2)
-        scores[ticker] = pvs 
-        
-    return scores
-
-def get_qeps(ticker, cached_tickers):
-    """Fetch quarterly earnings and dividend data from either cache or new scrape."""
-    qeps = 0
+def get_qni(ticker):
+    """Fetch quarterly net income from cache or new scrape
+    
+    (quarterly net income = combined quarterly EPS and dividend)
+    """
+    qni = 0
 
     ## check if cached
     for row in cached_tickers:
         if row['ticker'] == ticker and row['last_earnings']:
 
-            ## use cached EPS if fresh
+            ## use cached if fresh (<= 90 days old)
             last_eps = row['last_earnings']
             last_eps_date = datetime.date.fromisoformat(last_eps)
             days_since = (datetime.date.today() - last_eps_date).days
 
             if days_since <= 90:
-                qeps = float(row['qeps'])
+                qni = float(row['qni'])
             
-            ## scrape for new data if older than 90 days
+            ## else remove old cache listing and scrape for updated data
             else:
-                cached_tickers = list(filter(lambda r: r['ticker'] != ticker, cached_tickers))
-                qeps = scrape_qeps(ticker, cached_tickers)
+                cached_tickers.remove(row)
+                qni = scrape_qni(ticker)
 
-    ## scrape for new data if not cached
-    if not qeps:
-        qeps = scrape_qeps(ticker, cached_tickers)
+    ## scrape if not cached
+    if not qni:
+        qni = scrape_qni(ticker)
 
-    return qeps
+    return qni
 
-def scrape_qeps(ticker, cached_tickers):
-    """Scrape for new earnings and dividend data, save to pending cache update
-    
-    (Last EPS and dividend are combined and measured against current price to calculate PVS)
-    """
+def scrape_qni(ticker):
+    """Scrape for new earnings and dividend data, save to pending cache update"""
 
     url = f"https://www.alphaquery.com/stock/{ticker}/all-data-variables"
     r = requests.get(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:75.0) Gecko/20100101 Firefox/75.0', 'authority': 'www.alphaquery.com', 'sec-ch-ua': '" Not A;Brand";v="99", "Chromium";v="75", "Google Chrome";v="75"', 'referer': 'https://www.alphaquery.com/stock/', 'accept': 'application/json, text/javascript, */*; q=0.01'})
     soup = BeautifulSoup(r.content, "html.parser")
 
-    ## find latest quarterly EPS (or use 0 if not found)
-    qeps = soup.find(string='Last Quarterly Earnings per Share')
-    qeps = qeps.find_parent("td") if qeps else 0
-    qeps = qeps.findNextSibling() if qeps else 0
-    qeps = float(qeps.text) if qeps else 0
+    ## find latest quarterly EPS (0 if not found)
+    qeps_title_elem = soup.find(string='Last Quarterly Earnings per Share')
+    qeps_parent_table_elem = qeps_title_elem.find_parent("td") if qeps_title_elem else None
+    qeps_val_elem = qeps_parent_table_elem.findNextSibling() if qeps_parent_table_elem else None
+    qeps = float(qeps_val_elem.text) if qeps_val_elem else 0
 
-    ## find last dividend amount (or use 0 if not found)
-    divid = soup.find(string='Last Dividend Amount')
-    divid = divid.find_parent("td") if divid else 0
-    divid = divid.findNextSibling() if divid else 0
-    divid = float(divid.text) if divid and divid.text else 0
+    ## find last dividend amount (0 if not found)
+    divid_title_elem = soup.find(string='Last Dividend Amount')
+    divid_parent_table_elem = divid_title_elem.find_parent("td") if divid_title_elem else None
+    divid_val_elem = divid_parent_table_elem.findNextSibling() if divid_parent_table_elem else None
+    divid = float(divid_val_elem.text) if divid_val_elem and divid_val_elem.text else 0
 
-    qeps += divid
+    qni = qeps + divid
 
     ## find last reported earnings date
-    last_eps = soup.find(string='Last Quarterly Earnings Report Date')
-    last_eps = last_eps.find_parent("td") if last_eps else None
-    last_eps = last_eps.findNextSibling() if last_eps else None
-    last_eps = last_eps.text if last_eps else None
+    last_eps_title_elem = soup.find(string='Last Quarterly Earnings Report Date')
+    last_eps_parent_table_elem = last_eps_title_elem.find_parent("td") if last_eps_title_elem else None
+    last_eps_val_elem = last_eps_parent_table_elem.findNextSibling() if last_eps_parent_table_elem else None
+    last_eps = last_eps_val_elem.text if last_eps_val_elem else None
 
     ## save fresh data
-    cached_tickers.append({'ticker': ticker, 'last_earnings': last_eps, 'qeps': qeps})
-    return qeps
-
-def update_cache(cached_tickers):
-    """Update cache with latest earnings and dividend data."""
-
-    with open('cache.csv', 'w', newline='') as cache:
-        writer = csv.DictWriter(cache, fieldnames=['ticker', 'last_earnings', 'qeps'])
-        writer.writeheader()
-        for row in cached_tickers:
-            writer.writerow(row)
+    cached_tickers.append({'ticker': ticker, 'last_earnings': last_eps, 'qni': qni})
+    return qni
 
 def email_results(scores, new_tickers):
-    """Send scores to email."""
+    """Send scores to email"""
 
     ## get email credentials from args 1 and 2
     email_user = sys.argv[1]
@@ -191,6 +166,7 @@ def email_results(scores, new_tickers):
         return
     
     ## HTML structure
+    ## (highlight all new additions to cache.csv in red)
     html = """\
     <html>
     <body>
@@ -198,7 +174,6 @@ def email_results(scores, new_tickers):
     <ol style='font-size: 20px;'>{scores}</ol>
     </body>
     </html>""".format(scores="".join([f"<li>{k}: {v}</li>" if k not in new_tickers else f"<strong><li style='color:red'>{k}: {v}</li></strong>" for k, v in scores.items()]))
-    # highlight all new additions to cache.csv in red
 
     msg = MIMEText(html, 'html')
     msg['Subject'] = f"Scan Results: {datetime.date.today()}"
@@ -207,6 +182,15 @@ def email_results(scores, new_tickers):
     with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
         smtp.login(email_user, email_p)
         smtp.sendmail(email_user, email_user, msg.as_string())
+
+def update_cache(updated_tickers):
+    """Update cache with latest quarterly net incomes"""
+
+    with open('cache.csv', 'w', newline='') as cache:
+        writer = csv.DictWriter(cache, fieldnames=['ticker', 'last_earnings', 'qni'])
+        writer.writeheader()
+        for row in updated_tickers:
+            writer.writerow(row)
 
 if __name__ == "__main__":
     ## raise exception if email user and email pass not passed as args 1 and 2 
@@ -219,18 +203,24 @@ if __name__ == "__main__":
 
         ## get new (uncached) tickers
         tickers = [row['ticker'] for row in cached_tickers]
-        new_tickers = get_new_tickers(scan_results, tickers)
+        new_tickers = get_new_tickers_from_scan(scan_results, tickers)
 
-        ## get scores
-        scores = calculate_pvs(scan_results, cached_tickers)
+        ## get proxy valuation scores
+        scores = {}
+        for stock in scan_results:
+            data = stock['d']
+            ticker = data[0]
+            price = data[2]
 
-        ## update cache with fresh scores
-        update_cache(cached_tickers)
+            qni = get_qni(ticker)
+            scores[ticker] = calculate_pvs(price, qni)
 
-        ## sort scores
         sorted_scores = {k: v for k, v in sorted(scores.items(), key=lambda item: item[1], reverse=True)}
 
         ## send to email
         email_results(sorted_scores, new_tickers)
+
+        ## update cache with fresh scores / earnings dates
+        update_cache(cached_tickers)
     except Exception as e:
         print(f"error: {e}\n{traceback.format_exc()}\n")
