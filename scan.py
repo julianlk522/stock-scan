@@ -49,29 +49,45 @@ def tv_scan():
     resp = requests.post(api_url, data=settings_json, headers=headers)
     return resp.json()['data']
 
-def get_cached_tickers():
-    """Read cached tickers/EPS/Dividends from cache.csv"""
+def get_cached_data():
+    """Read tickers/EPS/Dividends from cache.csv"""
+
     with open('cache.csv') as cache:
         reader = csv.DictReader(cache)
-        cached_tickers = list(reader)
-        print(f"{len(cached_tickers)} cached tickers")
+        data = list(reader)
+        print(f"{len(data)} cached tickers")
 
-    return cached_tickers
+    return data
 
-def get_new_tickers_from_scan(scan_results, cache):
-    """Get new tickers from TradingView scan results.
+def get_qni(ticker):
+    """Fetch quarterly net income from cache or new scrape
     
-    (Informs email_results func which tickers to highlight in email HTML)"""
+    (quarterly net income = combined quarterly EPS and dividend)
+    """
+    qni = 0
 
-    ## data = stock['d']
-    ## ticker = data[0]
-    new = [stock['d'][0] for stock in scan_results if stock['d'][0] not in cache]
+    ## check if cached
+    for row in cache:
+        if row['ticker'] == ticker and row['last_earnings']:
 
-    if len(new):
-        print(f"{len(new)} new tickers:\n"+ "\n".join(new))
-    else:
-        print("No new tickers")
-    return new
+            ## use cached if fresh (<= 90 days old)
+            last_eps = row['last_earnings']
+            last_eps_date = datetime.date.fromisoformat(last_eps)
+            days_since = (datetime.date.today() - last_eps_date).days
+
+            if days_since <= 90:
+                qni = float(row['qni'])
+            
+            ## else remove old cache listing and scrape for updated data
+            else:
+                cache.remove(row)
+                qni = scrape_qni(ticker)
+
+    ## scrape if not cached
+    if not qni:
+        qni = scrape_qni(ticker)
+
+    return qni
 
 def calculate_pvs(price, qni):
     """Calculate Proxy Valuation Score (PVS) for stock: ratio of current price to quarterly net income (combined quarterly EPS and last quarterly dividend)
@@ -92,36 +108,6 @@ def calculate_pvs(price, qni):
 
     return round(100 / (price / qni) - 1, 2) if qni is not None or qni > 0 else 0
 
-def get_qni(ticker):
-    """Fetch quarterly net income from cache or new scrape
-    
-    (quarterly net income = combined quarterly EPS and dividend)
-    """
-    qni = 0
-
-    ## check if cached
-    for row in cached_tickers:
-        if row['ticker'] == ticker and row['last_earnings']:
-
-            ## use cached if fresh (<= 90 days old)
-            last_eps = row['last_earnings']
-            last_eps_date = datetime.date.fromisoformat(last_eps)
-            days_since = (datetime.date.today() - last_eps_date).days
-
-            if days_since <= 90:
-                qni = float(row['qni'])
-            
-            ## else remove old cache listing and scrape for updated data
-            else:
-                cached_tickers.remove(row)
-                qni = scrape_qni(ticker)
-
-    ## scrape if not cached
-    if not qni:
-        qni = scrape_qni(ticker)
-
-    return qni
-
 def scrape_qni(ticker):
     """Scrape for new earnings and dividend data, save to cached scores"""
 
@@ -132,7 +118,7 @@ def scrape_qni(ticker):
     last_eps_date = get_alphaquery_table_text(ticker, 'Last Quarterly Earnings Report Date')
 
     ## save fresh data
-    cached_tickers.append({'ticker': ticker, 'last_earnings': last_eps_date, 'qni': qni})
+    cache.append({'ticker': ticker, 'last_earnings': last_eps_date, 'qni': qni})
     return qni
 
 def get_alphaquery_table_text(ticker, text):
@@ -149,6 +135,19 @@ def get_alphaquery_table_text(ticker, text):
     val = val_elem.text if val_elem and val_elem.text != "" else 0
 
     return val
+
+def get_new_tickers_from_scan(scan, cached_tickers):
+    """Get new tickers from TradingView scan results.
+    
+    (Informs email_results func which tickers to highlight in email HTML)"""
+
+    new = [stock['d'][0] for stock in scan if stock['d'][0] not in cached_tickers]
+
+    if len(new):
+        print(f"{len(new)} new tickers:\n"+ "\n".join(new))
+    else:
+        print("No new tickers")
+    return new
 
 def email_results(scores, new_tickers):
     """Send scores to email"""
@@ -180,13 +179,13 @@ def email_results(scores, new_tickers):
         smtp.login(email_user, email_p)
         smtp.sendmail(email_user, email_user, msg.as_string())
 
-def update_cache(updated_tickers):
-    """Update cache with latest quarterly net incomes"""
+def update_cache():
+    """Add latest quarterly net incomes / earnings dates"""
 
-    with open('cache.csv', 'w', newline='') as cache:
-        writer = csv.DictWriter(cache, fieldnames=['ticker', 'last_earnings', 'qni'])
+    with open('cache.csv', 'w', newline='') as new_cache:
+        writer = csv.DictWriter(new_cache, fieldnames=['ticker', 'last_earnings', 'qni'])
         writer.writeheader()
-        for row in updated_tickers:
+        for row in cache:
             writer.writerow(row)
 
 if __name__ == "__main__":
@@ -194,15 +193,11 @@ if __name__ == "__main__":
         raise Exception("Email user and email pass not provided as arguments")
 
     try:
-        scan_results = tv_scan()
-        cached_tickers = get_cached_tickers()
-
-        tickers = [row['ticker'] for row in cached_tickers]
-        new_tickers = get_new_tickers_from_scan(scan_results, tickers)
+        scan = tv_scan()
+        cache = get_cached_data()
 
         scores = {}
-        for stock in scan_results:
-            print("scanning: ", stock)
+        for stock in scan:
             data = stock['d']
             ticker = data[0]
             price = data[2]
@@ -211,7 +206,11 @@ if __name__ == "__main__":
             scores[ticker] = calculate_pvs(price, qni)
         sorted_scores = {k: v for k, v in sorted(scores.items(), key=lambda item: item[1], reverse=True)}
 
-        # email_results(sorted_scores, new_tickers)
-        update_cache(cached_tickers)
+        tickers = [row['ticker'] for row in cache]
+        new_tickers = get_new_tickers_from_scan(scan, tickers)
+        email_results(sorted_scores, new_tickers)
+
+        update_cache()
+
     except Exception as e:
         print(f"error: {e}\n{traceback.format_exc()}\n")
