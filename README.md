@@ -29,7 +29,7 @@ or if Python is not in the PATH variable:
 Stocks in scan results are ranked by Proxy Valuation Score
 
 ```
-PVS = Price / (quarterly EPS + quarterly dividend)
+PVS = 100 / (Price / (Quarterly EPS + Quarterly Dividend))
 ```
 
 **Subject**: Scan Results: 2024-10-16
